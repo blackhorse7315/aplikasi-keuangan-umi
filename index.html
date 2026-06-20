@@ -60,9 +60,9 @@
                 <div>
                     <h1 class="text-lg font-bold leading-tight flex items-center gap-2">
                         Management Keuangan Umi
-                        <span id="syncIndicator" class="text-indigo-200 text-xs hidden" title="Sinkronisasi Cloud Aktif">
+                        <button onclick="pullFromGoogleSheets()" id="syncIndicator" class="text-indigo-200 text-xs hidden cursor-pointer hover:text-white transition-colors" title="Tarik Data dari Cloud">
                             <i class="fa-solid fa-cloud"></i>
-                        </span>
+                        </button>
                     </h1>
                     <p id="syncStatusText" class="text-indigo-200 text-[10px]">Data tersimpan lokal</p>
                 </div>
@@ -402,6 +402,50 @@
                 }
             } catch (error) {
                 document.getElementById('syncStatusText').innerText = "Offline (Tersimpan lokal)";
+            }
+        }
+
+        async function pullFromGoogleSheets() {
+            if (!GOOGLE_SCRIPT_URL) return;
+            
+            const icon = document.getElementById('syncIndicator').querySelector('i');
+            const text = document.getElementById('syncStatusText');
+            
+            try {
+                icon.className = "fa-solid fa-arrows-rotate fa-spin text-indigo-300";
+                text.innerText = "Menarik data...";
+                
+                const response = await fetch(GOOGLE_SCRIPT_URL, {
+                    method: 'GET'
+                });
+                
+                if (!response.ok) throw new Error('Network response was not ok');
+                
+                const cloudData = await response.json();
+                
+                if (cloudData && cloudData.accounts && cloudData.transactions) {
+                    state = cloudData;
+                    localStorage.setItem('ibuWimaFinance', JSON.stringify(state));
+                    updateUI();
+                    showToast('Data berhasil ditarik dari Cloud');
+                    
+                    icon.className = "fa-solid fa-cloud-check text-emerald-300";
+                    text.innerText = "Tersinkronisasi";
+                } else {
+                    throw new Error('Invalid data format');
+                }
+            } catch (error) {
+                console.error('Error pulling data:', error);
+                icon.className = "fa-solid fa-cloud text-indigo-200";
+                text.innerText = "Gagal menarik data";
+                showToast('Gagal menarik data dari Cloud', 'fa-solid fa-circle-exclamation', 'text-rose-400');
+            } finally {
+                setTimeout(() => { 
+                    if(icon.classList.contains('fa-cloud-check') || icon.classList.contains('fa-cloud')) {
+                       icon.className = "fa-solid fa-cloud text-indigo-200"; 
+                       text.innerText = "Tersimpan di Sheets";
+                    }
+                }, 3000);
             }
         }
 
