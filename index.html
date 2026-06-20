@@ -17,6 +17,17 @@
     <link rel="manifest" href="data:application/manifest+json;base64,eyJuYW1lIjoiTWFuYWdlbWVudCBLZXVhbmdhbiBVbWkiLCJzaG9ydF9uYW1lIjoiS2FzIFVtaSIsInN0YXJ0X3VybCI6Ii4iLCJkaXNwbGF5Ijoic3RhbmRhbG9uZSIsImJhY2tncm91bmRfY29sb3ciOiIjZjhmYWZjIiwidGhlbWVfY29sb3ciOiIjNGY0NmU1IiwiaWNvbnMiOlt7InNyYyI6Imh0dHBzOi8vbGgzLmdvb2dsZXVzZXJjb250ZW50LmNvbS9kLzFBQjItSk5nU0Q1aFhoZEtqbGlWaTlzcm1DSG55X0x1aCIsInNpemVzIjoiMTkyeDE5MiA1MTJ4NTEyIiwidHlwZSI6ImltYWdlL3BuZyIsInB1cnBvc2UiOiJhbnkgbWFza2FibGUifV19">
 
     <script src="https://cdn.tailwindcss.com"></script>
+      <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#4f46e5', // Menyesuaikan dengan theme-color Anda
+                    }
+                }
+            }
+        }
+    </script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <!-- Library untuk Generate PDF A4 Profesional -->
@@ -36,7 +47,7 @@
         .modal-content-animate { animation: slideUp 0.3s ease-out; }
     </style>
 </head>
-<body class="text-slate-800 antialiased h-screen flex flex-col">
+<body class="bg-gray-100 font-sans antialiased text-gray-800">
 
     <!-- Navigasi Atas -->
     <header class="bg-indigo-600 text-white shadow-md z-10 sticky top-0">
@@ -462,6 +473,139 @@
             }
         }
 
+        function deleteAccount(accountId) {
+            const acc = state.accounts.find(a => a.id === accountId);
+            if (!acc) return;
+
+            const relatedTxCount = state.transactions.filter(t => t.accountId === accountId).length;
+            let msg = `Yakin ingin menghapus rekening "${acc.name}"?`;
+            if (relatedTxCount > 0) {
+                msg += `\n\nPERINGATAN: ${relatedTxCount} transaksi terkait juga akan dihapus permanen!`;
+            }
+
+            if (confirm(msg)) {
+                // Hapus rekening
+                state.accounts = state.accounts.filter(a => a.id !== accountId);
+                // Hapus transaksi yang terkait dengan rekening ini
+                state.transactions = state.transactions.filter(t => t.accountId !== accountId);
+
+                // Jika rekening yang dihapus sedang difilter, kembalikan filter ke 'all'
+                if (document.getElementById('globalFilter').value === accountId) {
+                    document.getElementById('globalFilter').value = 'all';
+                }
+
+                saveData(); 
+                updateUI(); 
+                showToast('Rekening dihapus.', 'fa-solid fa-trash', 'text-rose-400');
+            }
+        }
+     
+        // Fungsi exportPDF dengan fitur perhitungan Saldo Berjalan dan Saldo Akhir
+        function exportPDF() {
+            // Pastikan library jsPDF sudah dimuat
+            if (typeof window.jspdf === 'undefined') {
+                alert('Library PDF belum dimuat. Pastikan ada koneksi internet.');
+                return;
+            }
+
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+
+            // 1. Ambil filter rekening saat ini
+            const filterAcc = document.getElementById('globalFilter') ? document.getElementById('globalFilter').value : 'all';
+            let txs = state.transactions;
+            if (filterAcc !== 'all') {
+                txs = txs.filter(t => t.accountId === filterAcc);
+            }
+
+            // 2. Urutkan transaksi dari terlama ke terbaru (Ascending) untuk hitung saldo berjalan
+            let sortedTxs = [...txs].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+            // 3. Hitung selisih untuk mengetahui saldo awal yang tepat
+            //    (Agar baris terakhir di PDF cocok 100% dengan saldo di aplikasi saat ini)
+            let totalTxBalance = sortedTxs.reduce((sum, t) => t.type === 'income' ? sum + t.amount : sum - t.amount, 0);
+            
+            let actualCurrentBalance = 0;
+            if (filterAcc === 'all') {
+                actualCurrentBalance = state.accounts.reduce((sum, acc) => sum + acc.balance, 0);
+            } else {
+                const acc = state.accounts.find(a => a.id === filterAcc);
+                if (acc) actualCurrentBalance = acc.balance;
+            }
+
+            // Titik awal saldo sebelum transaksi pertama di daftar
+            let runningBalance = actualCurrentBalance - totalTxBalance;
+
+            // 4. Siapkan baris tabel dengan saldo pada setiap item yang masuk/keluar
+            const tableBody = sortedTxs.map(t => {
+                if (t.type === 'income') {
+                    runningBalance += t.amount;
+                } else {
+                    runningBalance -= t.amount;
+                }
+
+                return [
+                    new Date(t.date).toLocaleDateString('id-ID'),
+                    t.desc,
+                    t.type === 'income' ? formatRp(t.amount) : '-',
+                    t.type === 'expense' ? formatRp(t.amount) : '-',
+                    formatRp(runningBalance) // Kolom Saldo berjalan untuk tiap item
+                ];
+            });
+
+            // Jika ada saldo awal sebelum transaksi tercatat, tambahkan baris khusus di atas
+            if (sortedTxs.length > 0 && (actualCurrentBalance - totalTxBalance) !== 0) {
+                tableBody.unshift([
+                    '-', 
+                    'Saldo Awal Sebelumnya', 
+                    '-', 
+                    '-', 
+                    formatRp(actualCurrentBalance - totalTxBalance)
+                ]);
+            }
+
+            // 5. Header Dokumen PDF
+            doc.setFontSize(18);
+            doc.text('Laporan Transaksi Keuangan Umi', 14, 20);
+            
+            doc.setFontSize(11);
+            doc.text(`Tanggal Cetak: ${new Date().toLocaleDateString('id-ID')}`, 14, 28);
+            
+            const accountName = filterAcc === 'all' ? 'Semua Rekening' : state.accounts.find(a => a.id === filterAcc)?.name || '';
+            doc.text(`Rekening: ${accountName}`, 14, 34);
+
+            // 6. Buat Tabel dengan AutoTable
+            doc.autoTable({
+                startY: 40,
+                head: [['Tanggal', 'Keterangan', 'Pemasukan', 'Pengeluaran', 'Saldo']],
+                body: tableBody,
+                theme: 'grid',
+                headStyles: { fillColor: [79, 70, 229] }, // Warna Indigo menyesuaikan tema aplikasi
+                styles: { fontSize: 9, cellPadding: 3 },
+                columnStyles: {
+                    2: { halign: 'right', textColor: [22, 163, 74] }, // Teks hijau untuk pemasukan
+                    3: { halign: 'right', textColor: [220, 38, 38] }, // Teks merah untuk pengeluaran
+                    4: { halign: 'right', fontStyle: 'bold' }        // Saldo dicetak tebal
+                }
+            });
+
+            // 7. Tampilkan Saldo Akhir di bawah tabel
+            const finalY = doc.lastAutoTable.finalY || 40;
+            doc.setFontSize(12);
+            doc.setFont('helvetica', 'bold');
+            doc.text(`Total Saldo Akhir: ${formatRp(actualCurrentBalance)}`, 14, finalY + 12);
+
+            // Simpan PDF
+            doc.save(`Laporan_Keuangan_${new Date().getTime()}.pdf`);
+            
+            // Tampilkan notifikasi
+            if(typeof showToast === 'function') {
+                showToast('PDF berhasil diunduh', 'fa-solid fa-file-pdf', 'text-indigo-400');
+            } else {
+                alert('PDF berhasil diunduh!');
+            }
+        }
+
         function clearData() {
             if(confirm('HAPUS SEMUA DATA: Lanjutkan?')) {
                 localStorage.removeItem('ibuWimaFinance'); state = { accounts: [], transactions: [] };
@@ -504,7 +648,13 @@
             document.getElementById('accountsList').innerHTML = state.accounts.map(acc => `
                 <div class="snap-start flex-none w-64 bg-white border border-slate-200 rounded-2xl p-5 shadow-sm relative overflow-hidden group hover:border-indigo-300 transition-colors cursor-pointer" onclick="document.getElementById('globalFilter').value='${acc.id}'; handleFilterChange(); window.scrollTo({top:0, behavior:'smooth'})">
                     <div class="absolute -right-4 -top-4 text-slate-100 text-6xl opacity-30"><i class="fa-solid ${acc.icon}"></i></div>
-                    <div class="flex justify-between mb-4"><div class="flex items-center gap-3"><div class="w-10 h-10 rounded-full bg-slate-100 text-indigo-600 flex justify-center items-center"><i class="fa-solid ${acc.icon}"></i></div><h4 class="font-bold text-slate-700 truncate w-28">${acc.name}</h4></div><i class="fa-solid fa-filter text-slate-200 group-hover:text-indigo-400"></i></div>
+                    <div class="flex justify-between mb-4 relative z-10">
+                        <div class="flex items-center gap-3"><div class="w-10 h-10 rounded-full bg-slate-100 text-indigo-600 flex justify-center items-center"><i class="fa-solid ${acc.icon}"></i></div><h4 class="font-bold text-slate-700 truncate w-24">${acc.name}</h4></div>
+                        <div class="flex items-center gap-2">
+                            <button onclick="event.stopPropagation(); deleteAccount('${acc.id}')" class="text-slate-200 hover:text-rose-500 transition-colors p-1" title="Hapus Rekening"><i class="fa-solid fa-trash"></i></button>
+                            <i class="fa-solid fa-filter text-slate-200 group-hover:text-indigo-400 p-1"></i>
+                        </div>
+                    </div>
                     <p class="text-xs text-slate-500 mb-1">Saldo Tersedia</p><h2 class="text-xl font-bold text-slate-800">${formatRp(acc.balance)}</h2>
                 </div>
             `).join('');
