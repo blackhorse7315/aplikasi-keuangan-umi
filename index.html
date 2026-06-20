@@ -677,12 +677,75 @@
         }
 
         function downloadPDF() {
-            const { jsPDF } = window.jspdf; const doc = new jsPDF('p', 'pt', 'a4');
-            const printTransactions = getFilteredTransactions().sort((a, b) => new Date(a.date) - new Date(b.date));
-            doc.setFontSize(18); doc.text("LAPORAN KEUANGAN UMI", 40, 50); doc.setFontSize(10); doc.text(`Tanggal Cetak: ${new Date().toLocaleDateString('id-ID')}`, 40, 70);
-            const tableRows = printTransactions.length ? printTransactions.map(trx => [formatDate(trx.date), `${trx.category}\n(${state.accounts.find(a => a.id === trx.accountId)?.name||'-'})`, trx.description || "-", trx.type==='income' ? formatRp(trx.amount) : "-", trx.type==='expense' ? formatRp(trx.amount) : "-"]) : [["", "Tidak ada data", "", "", ""]];
-            doc.autoTable({ startY: 100, head: [["Tanggal", "Kategori", "Keterangan", "Pemasukan", "Pengeluaran"]], body: tableRows, headStyles: { fillColor: [79, 70, 229] }, columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' } } });
-            doc.save(`Laporan_Keuangan_${Date.now()}.pdf`); showToast("PDF Diunduh", "fa-solid fa-file-pdf", "text-rose-400");
+            if (typeof window.jspdf === 'undefined') { alert('Library PDF belum dimuat. Pastikan ada koneksi internet.'); return; }
+            const { jsPDF } = window.jspdf; 
+            const doc = new jsPDF('p', 'pt', 'a4'); 
+            
+            const filterAcc = document.getElementById('globalFilter').value;
+            let printTransactions = getFilteredTransactions().sort((a, b) => new Date(a.date) - new Date(b.date));
+            
+            // Hitung saldo acuan
+            let totalTxBalance = printTransactions.reduce((sum, t) => t.type === 'income' ? sum + t.amount : sum - t.amount, 0);
+            let actualCurrentBalance = 0;
+            if (filterAcc === 'all') {
+                actualCurrentBalance = state.accounts.reduce((sum, acc) => sum + acc.balance, 0);
+            } else {
+                const acc = state.accounts.find(a => a.id === filterAcc);
+                if (acc) actualCurrentBalance = acc.balance;
+            }
+            
+            let runningBalance = actualCurrentBalance - totalTxBalance;
+            const tableRows = [];
+            
+            // Tambahkan baris saldo awal jika ada selisih sebelum filter tanggal/transaksi ini
+            if (printTransactions.length > 0 && runningBalance !== 0) {
+                tableRows.push(['-', 'Saldo Awal Sebelumnya', '-', '-', '-', formatRp(runningBalance)]);
+            }
+            
+            // Masukkan data transaksi beserta saldo berjalannya
+            printTransactions.forEach(trx => {
+                if (trx.type === 'income') runningBalance += trx.amount;
+                else runningBalance -= trx.amount;
+                
+                tableRows.push([
+                    formatDate(trx.date), 
+                    `${trx.category}\n(${state.accounts.find(a => a.id === trx.accountId)?.name||'-'})`, 
+                    trx.description || "-", 
+                    trx.type === 'income' ? formatRp(trx.amount) : "-", 
+                    trx.type === 'expense' ? formatRp(trx.amount) : "-",
+                    formatRp(runningBalance)
+                ]);
+            });
+
+            if (tableRows.length === 0) tableRows.push(["", "Tidak ada data", "", "", "", ""]);
+
+            doc.setFontSize(18); 
+            doc.text("FINANCE MANAGEMENT REPORT", 40, 50); 
+            doc.setFontSize(10); 
+            doc.text(`Tanggal Cetak: ${new Date().toLocaleDateString('id-ID')}`, 40, 70);
+            const accountName = filterAcc === 'all' ? 'Semua Rekening' : state.accounts.find(a => a.id === filterAcc)?.name || '';
+            doc.text(`Rekening: ${accountName}`, 40, 85);
+
+            doc.autoTable({ 
+                startY: 100, 
+                head: [["Tanggal", "Kategori/Rekening", "Keterangan", "Pemasukan", "Pengeluaran", "Saldo"]], 
+                body: tableRows, 
+                headStyles: { fillColor: [79, 70, 229] }, 
+                columnStyles: { 
+                    3: { halign: 'right', textColor: [22, 163, 74] }, 
+                    4: { halign: 'right', textColor: [220, 38, 38] },
+                    5: { halign: 'right', fontStyle: 'bold' }
+                } 
+            });
+            
+            // Cetak Saldo Akhir di bawah tabel
+            const finalY = doc.lastAutoTable.finalY || 100;
+            doc.setFontSize(12);
+            doc.setFont('helvetica', 'bold');
+            doc.text(`Total Saldo Akhir: ${formatRp(actualCurrentBalance)}`, 40, finalY + 30);
+
+            doc.save(`Laporan_Keuangan_${Date.now()}.pdf`); 
+            showToast("PDF Diunduh", "fa-solid fa-file-pdf", "text-rose-400");
         }
 
         function openModal(id) { document.getElementById(id).classList.add('modal-active'); }
